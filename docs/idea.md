@@ -1,27 +1,27 @@
-# Background
-A large body of research exists on reaction development in both homogeneous and heterogeneous systems. 
-However, much of this knowledge is focused on laboratory-scale results.
+# 背景
+均一系および不均一系の反応開発に関する研究は数多く存在するが、その多くは実験室スケールにおける知見にとどまっている。
 
-In contrast, practical knowledge on reaction scale-up — such as reactor design, heat and mass transfer effects, 
-and operational challenges — is rarely documented or systematically shared.
+一方で、スケールアップに関する実践的な知識、すなわちリアクター設計、熱・物質移動の影響、運転上の課題などについては、
+体系的に整理・共有されることが少ない。
 
-As a result, scaling up reactions often relies on tacit knowledge within organizations, 
-leading to repeated trial-and-error and inefficiencies across the industry.
+その結果、反応のスケールアップは各組織内の暗黙知に依存することが多く、
+試行錯誤の繰り返しや非効率が業界全体で生じている。
 
-# Core Idea
-This project aims to make scale-up knowledge more accessible, structured, and reusable 
-by combining knowledge formalization with standardized experimental workflows.
+# コアアイデア
+本プロジェクトは、スケールアップに関する知識を「形式知化」し、再利用可能な形で整理することを目的とする。
+そのために、知識の構造化と実験プロセスの標準化を組み合わせたアプローチをとる。
 
-# Possible Implementations
+# 想定される実装
 
-## 1. Knowledge-support agent
-An agent that provides guidance for reaction development and scale-up based on accumulated knowledge, 
-including practical considerations that are often not described in academic literature.
+## 1. ナレッジ支援エージェント
+過去の知見やスケールアップに関する実務的な情報に基づき、
+反応開発やスケールアップに対する示唆・助言を提供するエージェント。
 
-## 2. Experimental prototyping kit
-A standardized platform for building and operating a simple flow reactor, combined with an application layer.
+## 2. 実験プロトタイピングキット
+簡易的なフローリアクターを構築・運用するための標準化されたプラットフォームと、
+それを支援するアプリケーションを組み合わせた仕組み。
 
-- Build a simple flow reactor from scratch
-- Connect the system to an app
-- Automatically generate engineering representations such as EFD or PFD
-- Enable structured accumulation of experimental and operational knowledge
+- フローリアクターをゼロから構築できるキット
+- 実験系をアプリと連携
+- EFDやPFDなどのエンジニアリング表現を自動生成
+- 実験データおよび運転知見の構造化・蓄積を可能にする
