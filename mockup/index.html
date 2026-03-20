@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>air_forest mockup - Knowledge Review Agent</title>
+    <style>
+      :root { color-scheme: light; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: #fff; color: #111; }
+      header { padding: 16px 20px; border-bottom: 1px solid #e5e7eb; }
+      main { padding: 16px 20px; max-width: 1100px; margin: 0 auto; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px; background: #fff; }
+      .card h2 { margin: 0 0 10px; font-size: 14px; }
+      .muted { color: #6b7280; font-size: 12px; }
+      button { border: 1px solid #d1d5db; background: #f9fafb; border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      input[type="file"] { border: 1px solid #d1d5db; padding: 10px 12px; border-radius: 8px; background: #fff; }
+      select { border: 1px solid #d1d5db; padding: 9px 10px; border-radius: 8px; background: #fff; }
+      pre { white-space: pre-wrap; word-break: break-word; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #e5e7eb; padding: 6px 8px; font-size: 12px; vertical-align: top; }
+      th { background: #f9fafb; text-align: left; }
+      .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+      .pill { display: inline-block; padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 999px; font-size: 12px; background: #fafafa; }
+      .danger { border-color: #fca5a5; background: #fef2f2; }
+      .ok { border-color: #86efac; background: #f0fdf4; }
+      .warn { border-color: #fde68a; background: #fffbeb; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+        <div>
+          <div style="font-weight:700;">air_forest（紙芝居モック）</div>
+          <div class="muted">Excel/スプレッドシート由来の計画書を投入 → “達人レビュー”っぽい出力 → 元フォーマットを壊さずレビューシート追加Excelを返す（フロントのみ）</div>
+        </div>
+        <div class="pill mono" id="privacy">ローカル処理のみ（アップロードしません）</div>
+      </div>
+    </header>
+
+    <main>
+      <div class="card" style="margin-bottom:12px;">
+        <h2>1) 入力（Excel）</h2>
+        <div class="row">
+          <input id="file" type="file" accept=".xlsx,.xls,.csv" />
+          <label class="muted">対応: .xlsx 優先（SheetJS CDN） / .csv も可</label>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <div>
+            <div class="muted">シート選択</div>
+            <select id="sheetSelect" disabled></select>
+          </div>
+          <div>
+            <div class="muted">プレビュー行数</div>
+            <select id="previewRows" disabled>
+              <option value="10">10</option>
+              <option value="20" selected>20</option>
+              <option value="50">50</option>
+            </select>
+          </div>
+          <button id="generate" disabled>2) レビュー生成（モック）</button>
+          <button id="downloadXlsx" disabled>3) Excel（レビューシート追加）をダウンロード</button>
+          <button id="downloadMd" disabled>レビュー（.md）をダウンロード</button>
+        </div>
+        <div id="status" class="muted" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h2>入力プレビュー</h2>
+          <div id="previewMeta" class="muted"></div>
+          <div id="preview" style="margin-top:10px; overflow:auto; max-height: 440px;"></div>
+        </div>
+
+        <div class="card">
+          <h2>出力（構造化レビュー / モック）</h2>
+          <div id="reviewBadges" class="row" style="margin-bottom:8px;"></div>
+          <pre id="review" class="mono" style="margin:0; font-size:12px; line-height:1.5;"></pre>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>このモックの割り切り</h2>
+        <ul style="margin: 0; padding-left: 18px; font-size: 12px; color:#374151;">
+          <li>LLM/DBは未接続。入力表を「それっぽく」解析して固定テンプレでレビュー文を生成します。</li>
+          <li>元のシートは変更せず、レビュー用の新規シート <span class="mono">_air_forest_review</span> を追加したExcelを返します（フォーマット破壊回避）。</li>
+          <li>本番では「テンプレExcel」や「最低限の列名規約」を決めると精度が上がる想定です。</li>
+        </ul>
+      </div>
+    </main>
+
+    <!-- SheetJS (xlsx) via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script>
+      /**
+       * Frontend-only mock.
+       * - Reads xlsx/csv locally
+       * - Generates a structured review mock
+       * - Exports an xlsx with an extra review sheet (does not mutate original sheets)
+       */
+
+      const els = {
+        file: document.getElementById('file'),
+        sheetSelect: document.getElementById('sheetSelect'),
+        previewRows: document.getElementById('previewRows'),
+        generate: document.getElementById('generate'),
+        downloadXlsx: document.getElementById('downloadXlsx'),
+        downloadMd: document.getElementById('downloadMd'),
+        status: document.getElementById('status'),
+        preview: document.getElementById('preview'),
+        previewMeta: document.getElementById('previewMeta'),
+        review: document.getElementById('review'),
+        reviewBadges: document.getElementById('reviewBadges'),
+      };
+
+      /** @type {{ fileName: string, workbook: any, bytes: ArrayBuffer, selectedSheet: string, reviewText: string, reviewRows: any[] } | null} */
+      let state = null;
+
+      function setStatus(text) {
+        els.status.textContent = text;
+      }
+
+      function safeText(value) {
+        if (value === null || value === undefined) return '';
+        return String(value);
+      }
+
+      function normalizeHeader(h) {
+        return safeText(h).trim().toLowerCase();
+      }
+
+      function guessSheetRole(name) {
+        const n = name.toLowerCase();
+        const has = (...xs) => xs.some(x => n.includes(x));
+        if (has('procedure', 'protocol', 'step', '手順', '操作', 'protokoll')) return 'procedure';
+        if (has('plan', 'design', 'doe', 'condition', '条件', '計画', 'run')) return 'plan';
+        if (has('result', 'data', '結果', '測定', 'analysis')) return 'data';
+        return 'unknown';
+      }
+
+      function getSheetAsRows(workbook, sheetName) {
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) return [];
+        return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      }
+
+      function escapeHtml(text) {
+        return safeText(text)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function renderPreviewTable(rows, maxRows) {
+        if (!rows || rows.length === 0) {
+          els.preview.innerHTML = '<div class="muted">プレビュー対象のデータがありません。</div>';
+          return;
+        }
+        const limited = rows.slice(0, Math.max(1, maxRows));
+        const header = limited[0] || [];
+        const body = limited.slice(1);
+
+        const maxCols = Math.min(30, Math.max(...limited.map(r => r.length), 1));
+        const ths = [];
+        for (let c = 0; c < maxCols; c++) {
+          const label = safeText(header[c] ?? '').trim();
+          ths.push(`<th>${label ? escapeHtml(label) : `<span class="muted">(col ${c + 1})</span>`}</th>`);
+        }
+        const trs = body.map(row => {
+          const tds = [];
+          for (let c = 0; c < maxCols; c++) {
+            tds.push(`<td>${escapeHtml(safeText(row[c] ?? ''))}</td>`);
+          }
+          return `<tr>${tds.join('')}</tr>`;
+        });
+
+        els.preview.innerHTML = `<table><thead><tr>${ths.join('')}</tr></thead><tbody>${trs.join('')}</tbody></table>`;
+      }
+
+      function buildBadges(summary) {
+        const badges = [];
+        const push = (label, cls) => badges.push(`<span class="pill ${cls}">${escapeHtml(label)}</span>`);
+        push(`リスク: ${summary.riskCount}`, summary.riskCount > 0 ? 'danger' : 'ok');
+        push(`抜け/確認: ${summary.questionCount}`, summary.questionCount > 0 ? 'warn' : 'ok');
+        push(`次アクション: ${summary.nextCount}`, summary.nextCount > 0 ? 'ok' : 'warn');
+        return badges.join('');
+      }
+
+      function findLikelyColumns(headerRow) {
+        const headers = (headerRow || []).map(h => normalizeHeader(h));
+        const idx = {
+          objective: headers.findIndex(h => ['目的', 'objective', 'aim', '狙い', 'goal'].some(k => h.includes(k))),
+          factor: headers.findIndex(h => ['因子', 'factor', 'parameter', '変数'].some(k => h.includes(k))),
+          level: headers.findIndex(h => ['水準', 'level', '値', 'value'].some(k => h === k || h.includes(k))),
+          unit: headers.findIndex(h => ['unit', '単位'].some(k => h.includes(k))),
+          step: headers.findIndex(h => ['step', '手順', '操作', 'procedure'].some(k => h.includes(k))),
+          note: headers.findIndex(h => ['note', '備考', 'メモ', 'comment'].some(k => h.includes(k))),
+        };
+        return idx;
+      }
+
+      function analyzeWorkbook(workbook) {
+        const sheetNames = workbook.SheetNames || [];
+        const roleBySheet = Object.fromEntries(sheetNames.map(n => [n, guessSheetRole(n)]));
+        const planSheet = sheetNames.find(n => roleBySheet[n] === 'plan') || sheetNames[0];
+        const procedureSheet = sheetNames.find(n => roleBySheet[n] === 'procedure') || sheetNames[0];
+
+        const planRows = getSheetAsRows(workbook, planSheet);
+        const procRows = getSheetAsRows(workbook, procedureSheet);
+
+        const planHeader = planRows[0] || [];
+        const procHeader = procRows[0] || [];
+        // Not used much yet, but kept to hint we can bind to a template later.
+        findLikelyColumns(planHeader);
+        findLikelyColumns(procHeader);
+
+        const planText = (planRows.slice(0, 60).flat().join(' ') + ' ' + planSheet).toLowerCase();
+        const procText = (procRows.slice(0, 120).flat().join(' ') + ' ' + procedureSheet).toLowerCase();
+
+        const keyword = (hay, words) => words.some(w => hay.includes(w));
+
+        const safetyFlags = [];
+        if (!keyword(procText, ['quench', 'クエンチ', '中和', '停止', '希釈'])) {
+          safetyFlags.push({ severity: 'WARN', msg: 'クエンチ/停止操作（反応停止・中和・希釈）の記載が見当たりません。スケールでは停止操作が安全と収率に直結します。', ref: procedureSheet });
+        }
+        if (!keyword(procText, ['stir', '撹拌', '攪拌', 'rpm', 'agit'])) {
+          safetyFlags.push({ severity: 'WARN', msg: '撹拌条件（rpm/翼/混合状態）の記載が薄い可能性があります。スケールアップでは混合差が選択性や暴走リスクに影響します。', ref: procedureSheet });
+        }
+        if (!keyword(procText, ['add', '滴下', '添加', '投入', '順序', 'order'])) {
+          safetyFlags.push({ severity: 'RISK', msg: '投入/添加の順序や速度（滴下時間等）の記載が見当たりません。発熱・副反応・局所濃度に影響します。', ref: procedureSheet });
+        }
+        if (!keyword(procText, ['temp', '温度', '℃', '°c'])) {
+          safetyFlags.push({ severity: 'RISK', msg: '温度プロファイル（到達確認、維持、冷却能力）の記載が見当たりません。安全面・再現性の観点で要確認です。', ref: procedureSheet });
+        }
+        if (!keyword(procText, ['sample', 'サンプル', '分析', 'hplc', 'gc', 'nmr', '測定'])) {
+          safetyFlags.push({ severity: 'WARN', msg: 'サンプリング/分析手順（いつ、どう採取し、何で判断するか）の記載が薄い可能性があります。', ref: procedureSheet });
+        }
+
+        const conditionQuestions = [];
+        if (!keyword(planText, ['solvent', '溶媒'])) conditionQuestions.push('溶媒（種類・水分・グレード）を変動因子に含める/固定する理由は？');
+        if (!keyword(planText, ['catalyst', '触媒'])) conditionQuestions.push('触媒（ロット・担体・前処理）をどう管理する？');
+        if (!keyword(planText, ['equiv', '当量', 'mol', '濃度', 'molar', 'wt%'])) conditionQuestions.push('濃度/当量/滴下速度など、スケールで再現可能な操作変数に落ちている？');
+        if (!keyword(planText, ['mix', '撹拌', '攪拌', 'rpm'])) conditionQuestions.push('混合（撹拌強度、Re数相当）を条件設計に入れる？');
+        if (!keyword(planText, ['heat', '発熱', '熱', '温度制御', '冷却'])) conditionQuestions.push('熱除去（発熱量、冷却能力、温度上昇）を評価する計画になっている？');
+
+        const stepMapping = [
+          { step: '目的の詰まりどころ', hint: 'この実験は「何の不確実性」を潰すため？（速度/選択性/安全/混合/分離/コスト…）' },
+          { step: '条件設計の理由', hint: '因子・範囲が仮説と対応している？ 交互作用の見落としは？' },
+          { step: 'スケール再現性', hint: '小スケール依存の手技（強撹拌・急冷・微量滴下）が残っていない？' },
+          { step: '安全と停止操作', hint: 'クエンチ、緊急停止、発熱時の対処が明示されている？' },
+          { step: '品質/評価', hint: '評価指標（収率/選択性/不純物/CQA）と測定が結びついている？' },
+        ];
+
+        const risks = safetyFlags.filter(x => x.severity === 'RISK');
+        const warns = safetyFlags.filter(x => x.severity !== 'RISK');
+
+        const reviewLines = [];
+        reviewLines.push('# air_forest レビュー（モック）');
+        reviewLines.push('');
+        reviewLines.push('## 0. サマリ（何を詰める実験か）');
+        reviewLines.push('- 推定: 「条件群の妥当性」＋「手順の安全性/抜け漏れ」を詰める計画');
+        reviewLines.push(`- 参照シート（推定）: 計画=${planSheet} / 手順=${procedureSheet}`);
+        reviewLines.push('');
+        reviewLines.push('## 1. スケールアップ観点での位置づけ（ステップマップ）');
+        for (const m of stepMapping) reviewLines.push(`- ${m.step}: ${m.hint}`);
+        reviewLines.push('');
+        reviewLines.push('## 2. 条件群（因子・範囲）の理由/妥当性（要確認）');
+        if (conditionQuestions.length === 0) {
+          reviewLines.push('- 主要因子は記載されているように見えます（モック判定）。ただし範囲設定の根拠（失敗モード、制約、仮説）を文章で残すと再利用性が上がります。');
+        } else {
+          for (const q of conditionQuestions.slice(0, 8)) reviewLines.push(`- Q: ${q}`);
+        }
+        reviewLines.push('');
+        reviewLines.push('## 3. 手順（安全・抜け漏れ）');
+        if (risks.length === 0 && warns.length === 0) {
+          reviewLines.push('- 大きな抜けは見当たりません（モック判定）。');
+        } else {
+          if (risks.length > 0) {
+            reviewLines.push('### 重大リスク（RISK）');
+            for (const r of risks) reviewLines.push(`- [RISK] ${r.msg}（参照: ${r.ref}）`);
+            reviewLines.push('');
+          }
+          if (warns.length > 0) {
+            reviewLines.push('### 注意/要確認（WARN）');
+            for (const w of warns) reviewLines.push(`- [WARN] ${w.msg}（参照: ${w.ref}）`);
+            reviewLines.push('');
+          }
+        }
+        reviewLines.push('## 4. 次アクション案（モック）');
+        const next = [
+          '不足情報（目的/仮説/評価指標）を1段落で追記する',
+          '因子・範囲の設定根拠（なぜその水準か）を列/セルに残す',
+          '安全停止（クエンチ/緊急停止）の標準手順を明記し、スケール時の熱暴走/ガス発生の想定を追記する',
+          'スケール再現性のため、操作変数を「制御可能なパラメータ」（滴下時間、rpm、冷却能力、保持時間）で書き直す',
+        ];
+        for (const n of next) reviewLines.push(`- ${n}`);
+        reviewLines.push('');
+        reviewLines.push('---');
+        reviewLines.push('※これはモック出力です。本番は社内知見/過去実験/安全情報を根拠として引用し、レビュー粒度もテンプレ化します。');
+
+        const reviewText = reviewLines.join('\n');
+
+        const reviewRows = [];
+        reviewRows.push(['section', 'severity', 'item', 'reference']);
+        reviewRows.push(['Summary', 'INFO', `Plan sheet: ${planSheet}`, planSheet]);
+        reviewRows.push(['Summary', 'INFO', `Procedure sheet: ${procedureSheet}`, procedureSheet]);
+        for (const r of risks) reviewRows.push(['Procedure', r.severity, r.msg, r.ref]);
+        for (const w of warns) reviewRows.push(['Procedure', w.severity, w.msg, w.ref]);
+        for (const q of conditionQuestions) reviewRows.push(['Conditions', 'QUESTION', q, planSheet]);
+        for (const n of next) reviewRows.push(['Next', 'ACTION', n, '']);
+
+        const summary = {
+          riskCount: risks.length,
+          questionCount: conditionQuestions.length + warns.length,
+          nextCount: next.length,
+        };
+
+        return { planSheet, procedureSheet, reviewText, reviewRows, summary };
+      }
+
+      function downloadBlob(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function setEnabled(ready) {
+        els.sheetSelect.disabled = !ready;
+        els.previewRows.disabled = !ready;
+        els.generate.disabled = !ready;
+        els.downloadXlsx.disabled = !ready;
+        els.downloadMd.disabled = !ready;
+      }
+
+      function assertXlsxAvailable() {
+        if (!window.XLSX) {
+          setStatus('XLSXライブラリが読み込めませんでした。ネットワーク接続 or CDNを確認してください。');
+          return false;
+        }
+        return true;
+      }
+
+      function resetOutputs() {
+        els.review.textContent = '';
+        els.reviewBadges.innerHTML = '';
+      }
+
+      async function onFileSelected(file) {
+        resetOutputs();
+        if (!file) {
+          state = null;
+          setEnabled(false);
+          setStatus('');
+          return;
+        }
+        if (!assertXlsxAvailable()) {
+          setEnabled(false);
+          return;
+        }
+        setStatus('読み込み中...');
+
+        const bytes = await file.arrayBuffer();
+        let workbook;
+        try {
+          workbook = XLSX.read(bytes, { type: 'array' });
+        } catch (e) {
+          console.error(e);
+          setStatus('読み込みに失敗しました。xlsx/csv形式を確認してください。');
+          setEnabled(false);
+          return;
+        }
+
+        const sheetNames = workbook.SheetNames || [];
+        if (sheetNames.length === 0) {
+          setStatus('シートが見つかりません。');
+          setEnabled(false);
+          return;
+        }
+
+        els.sheetSelect.innerHTML = '';
+        for (const name of sheetNames) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          els.sheetSelect.appendChild(opt);
+        }
+
+        state = {
+          fileName: file.name,
+          workbook,
+          bytes,
+          selectedSheet: sheetNames[0],
+          reviewText: '',
+          reviewRows: [],
+        };
+
+        els.sheetSelect.value = state.selectedSheet;
+        renderSelectedSheetPreview();
+        setEnabled(true);
+        setStatus(`読み込み完了: ${file.name}（${sheetNames.length} sheets）`);
+      }
+
+      function renderSelectedSheetPreview() {
+        if (!state) return;
+        const sheetName = els.sheetSelect.value;
+        state.selectedSheet = sheetName;
+        const rows = getSheetAsRows(state.workbook, sheetName);
+        const maxRows = Number(els.previewRows.value || 20);
+        const role = guessSheetRole(sheetName);
+        els.previewMeta.textContent = `sheet: ${sheetName} / role(推定): ${role} / rows: ${rows.length}`;
+        renderPreviewTable(rows, maxRows);
+      }
+
+      function generateReview() {
+        if (!state) return;
+        setStatus('レビュー生成中（モック）...');
+        const out = analyzeWorkbook(state.workbook);
+        state.reviewText = out.reviewText;
+        state.reviewRows = out.reviewRows;
+        els.review.textContent = out.reviewText;
+        els.reviewBadges.innerHTML = buildBadges(out.summary);
+        setStatus('レビュー生成完了（モック）');
+      }
+
+      function exportReviewedXlsx() {
+        if (!state) return;
+        if (!state.reviewRows || state.reviewRows.length === 0) {
+          generateReview();
+        }
+
+        const wb = state.workbook;
+        const reviewSheetName = '_air_forest_review';
+        const safeName = wb.SheetNames.includes(reviewSheetName) ? `_air_forest_review_${Date.now()}` : reviewSheetName;
+        const ws = XLSX.utils.aoa_to_sheet(state.reviewRows);
+        XLSX.utils.book_append_sheet(wb, ws, safeName);
+
+        const outBytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([outBytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const base = state.fileName.replace(/\.(xlsx|xls|csv)$/i, '');
+        downloadBlob(blob, `${base}__air_forest_review.xlsx`);
+
+        // Remove appended sheet to keep state stable.
+        delete wb.Sheets[safeName];
+        wb.SheetNames = wb.SheetNames.filter(n => n !== safeName);
+      }
+
+      function exportReviewMd() {
+        if (!state) return;
+        if (!state.reviewText) generateReview();
+        const blob = new Blob([state.reviewText], { type: 'text/markdown; charset=utf-8' });
+        const base = state.fileName.replace(/\.(xlsx|xls|csv)$/i, '');
+        downloadBlob(blob, `${base}__air_forest_review.md`);
+      }
+
+      els.file.addEventListener('change', (e) => onFileSelected(e.target.files?.[0]));
+      els.sheetSelect.addEventListener('change', renderSelectedSheetPreview);
+      els.previewRows.addEventListener('change', renderSelectedSheetPreview);
+      els.generate.addEventListener('click', generateReview);
+      els.downloadXlsx.addEventListener('click', exportReviewedXlsx);
+      els.downloadMd.addEventListener('click', exportReviewMd);
+
+      setEnabled(false);
+      setStatus('Excelファイルを選択してください。');
+    </script>
+  </body>
+</html>
